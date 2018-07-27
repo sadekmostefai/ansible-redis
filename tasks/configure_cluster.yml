@@ -1,0 +1,20 @@
+---
+- name: Install redis gem
+  package:
+    name: rubygem-redis
+  when: ansible_distribution == "CentOS" and ansible_distribution_major_version > '7'
+ 
+- name: Install redis-trib from localfile.
+  copy:
+    src: redis-trib.rb
+    dest: /usr/bin/redis-trib.rb
+    mode: 0755
+ 
+- name: print node list
+  debug:
+    msg: "{{ redis_node_list }}"
+ 
+- name: Create cluster with all nodes
+  shell: "yes 'yes' | redis-trib.rb create --replicas {{ redis_cluster_replicas }} {{ redis_node_list }} && touch {{ redis_conf_dir }}/redis-cluster-created"
+  args:
+    creates: "{{ redis_conf_dir }}/redis-cluster-created"
