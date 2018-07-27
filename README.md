@@ -2,21 +2,10 @@
 
 [![Build Status](https://travis-ci.org/DavidWittman/ansible-redis.svg?branch=master)](https://travis-ci.org/DavidWittman/ansible-redis) [![Ansible Galaxy](https://img.shields.io/badge/galaxy-ansible-redis-blue.svg?style=flat)](https://galaxy.ansible.com/detail#/role/730)
 
+ - This project was initialy forked from DavidWittman/ansible-redis project. All new features are for cluster mode.
  - Ansible 2.1+
- - Compatible with most versions of Ubuntu/Debian and RHEL/CentOS 6.x
+ - Compatible with most versions of Ubuntu/Debian and RHEL/CentOS 7.x
  
-## Contents
-
- 1. [Installation](#installation)
- 2. [Getting Started](#getting-started)
-  1. [Single Redis node](#single-redis-node)
-  2. [Master-Slave Replication](#master-slave-replication)
-  3. [Redis Sentinel](#redis-sentinel)
- 3. [Advanced Options](#advanced-options)
-  1. [Verifying checksums](#verifying-checksums)
-  2. [Install from local tarball](#install-from-local-tarball)
-  3. [Building 32-bit binaries](#building-32-bit-binaries)
- 4. [Role Variables](#role-variables)
 
 ## Installation
 
@@ -103,6 +92,72 @@ In this case, I'm assuming you have DNS records set up for redis-master.example.
 
 ``` main.yml
 redis_slaveof: "{{ hostvars['redis-master.example.com'].ansible_eth0.ipv4.address }} {{ redis_port }}"
+```
+
+### Cluster mode
+ 
+In this example, we're going to use groups to separate the Redis nodes and the managment node. Let's start with the inventory file:
+
+``` hosts.ini
+[redis-nodes]
+redis-master1.example.com
+redis-master2.example.com
+redis-master3.example.com
+redis-slave1.example.com
+redis-slave2.example.com
+redis-slave3.example.com
+
+[redis-mgmt]
+redis-mgmt.example.com
+```
+
+This will create a Redis cluster with 3 masters with a replication factor of 1.
+
+And here's the playbook:
+
+``` main.yml
+---
+- hosts: redis-nodes
+  tasks:
+    - name: Deploy redis nodes
+      with_items:
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          cluster_enabled: true
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          cluster_enabled: true
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          cluster_enabled: true
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          cluster_enabled: true
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          cluster_enabled: true
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          cluster_enabled: true
+      loop_control:
+        loop_var: outer_item
+      include_role:
+        name: ansible-redis
+      vars:
+        redis_bind: "{{ outer_item.redis_bind }}"
+        redis_port: "{{ outer_item.redis_port }}"
+        cluster_enabled: "{{ outer_item.cluster_enabled }}"
+ 
+- hosts: redis-mgmt
+  tasks:
+    - name: Configure redis cluster
+      include_role:
+        name: ansible-redis
+        tasks_from: configure_cluster
+      vars:
+        redis_cluster_replicas: 1
+        redis_node_list: "{{ groups['redis-nodes'] | map('extract', hostvars, ['ansible_eth0', 'ipv4', 'address']) | zip([7379,7379,7379,7379,7379,7379]) | map('join', ':') | join(' ') }}"
+
 ```
 
 ## Advanced Options
