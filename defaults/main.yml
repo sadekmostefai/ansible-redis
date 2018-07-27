@@ -1,6 +1,6 @@
 ---
 ## Installation options
-redis_version: 2.8.24
+redis_version: 4.0.10
 redis_install_dir: /opt/redis
 redis_dir: /var/lib/redis/{{ redis_port }}
 redis_download_url: "http://download.redis.io/releases/redis-{{ redis_version }}.tar.gz"
@@ -16,7 +16,6 @@ redis_group: "{{ redis_user }}"
 
 # The open file limit for Redis/Sentinel
 redis_nofile_limit: 16384
-redis_oom_score_adjust: 0
 
 ## Role options
 # Configure Redis as a service
@@ -105,7 +104,6 @@ redis_sentinel_port: 26379
 redis_sentinel_pidfile: /var/run/redis/sentinel_{{ redis_sentinel_port }}.pid
 redis_sentinel_logfile: '""'
 redis_sentinel_syslog_ident: sentinel_{{ redis_sentinel_port }}
-redis_sentinel_oom_score_adjust: 0
 redis_sentinel_monitors:
   - name: master01
     host: localhost
@@ -117,3 +115,6 @@ redis_sentinel_monitors:
     failover_timeout: 180000
     notification_script: false
     client_reconfig_script: false
+
+## Redis cluster configs
+cluster_enabled: false
