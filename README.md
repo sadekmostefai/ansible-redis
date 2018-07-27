@@ -21,7 +21,13 @@
 ## Installation
 
 ``` bash
-$ ansible-galaxy install ansible-redis
+$  requirements.yml:
+# from Github
+- scr: https://github.com/sadekmostefai/ansible-redis
+```
+
+``` bash
+$ ansible-galaxy install -r requirements.yml
 ```
 
 ## Getting started
@@ -30,26 +36,6 @@ Below are a few example playbooks and configurations for deploying a variety of 
 
 This role expects to be run as root or as a user with sudo privileges.
 
-### Single Redis node
-
-Deploying a single Redis server node is pretty trivial; just add the role to your playbook and go. Here's an example which we'll make a little more exciting by setting the bind address to 127.0.0.1:
-
-``` yml
----
-- hosts: redis01.example.com
-  vars:
-    - redis_bind: 127.0.0.1
-  roles:
-    - ansible-redis
-```
-
-``` bash
-$ ansible-playbook -i redis01.example.com, redis.yml
-```
-
-**Note:** You may have noticed above that I just passed a hostname in as the Ansible inventory file. This is an easy way to run Ansible without first having to create an inventory file, you just need to suffix the hostname with a comma so Ansible knows what to do with it.
-
-That's it! You'll now have a Redis server listening on 127.0.0.1 on redis01.example.com. By default, the Redis binaries are installed under /opt/redis, though this can be overridden by setting the `redis_install_dir` variable.
 
 ### Master-Slave replication
 
@@ -57,52 +43,7 @@ Configuring [replication](http://redis.io/topics/replication) in Redis is accomp
 
 In this example, we're going to use groups to separate the master and slave nodes. Let's start with the inventory file:
 
-``` ini
-[redis-master]
-redis-master.example.com
-
-[redis-slave]
-redis-slave0[1:3].example.com
-```
-
-And here's the playbook:
-
-``` yml
----
-- name: configure the master redis server
-  hosts: redis-master
-  roles:
-    - ansible-redis
-
-- name: configure redis slaves
-  hosts: redis-slave
-  vars:
-    - redis_slaveof: redis-master.example.com 6379
-  roles:
-    - ansible-redis
-```
-
-In this case, I'm assuming you have DNS records set up for redis-master.example.com, but that's not always the case. You can pretty much go crazy with whatever you need this to be set to. In many cases, I tell Ansible to use the eth1 IP address for the master. Here's a more flexible value for the sake of posterity:
-
-``` yml
-redis_slaveof: "{{ hostvars['redis-master.example.com'].ansible_eth1.ipv4.address }} {{ redis_port }}"
-```
-
-Now you're cooking with gas! Running this playbook should have you ready to go with a Redis master and three slaves.
-
-### Redis Sentinel
-
-#### Introduction
-
-Using Master-Slave replication is great for durability and distributing reads and writes, but not so much for high availability. If the master node fails, a slave must be manually promoted to master, and connections will need to be redirected to the new master. The solution for this problem is [Redis Sentinel](http://redis.io/topics/sentinel), a distributed system which uses Redis itself to communicate and handle automatic failover in a Redis cluster.
-
-Sentinel itself uses the same redis-server binary that Redis uses, but runs with the `--sentinel` flag and with a different configuration file. All of this, of course, is abstracted with this Ansible role, but it's still good to know.
-
-#### Configuration
-
-To add a Sentinel node to an existing deployment, assign this same `redis` role to it, and set the variable `redis_sentinel` to True on that particular host. This can be done in any number of ways, and for the purposes of this example I'll extend on the inventory file used above in the Master/Slave configuration:
-
-``` ini
+``` hosts.ini
 [redis-master]
 redis-master.example.com
 
@@ -110,41 +51,59 @@ redis-master.example.com
 redis-slave0[1:3].example.com
 
 [redis-sentinel]
-redis-sentinel0[1:3].example.com redis_sentinel=True
+redis-slave0[1:3].example.com
 ```
 
-Above, we've added three more hosts in the **redis-sentinel** group (though this group serves no purpose within the role, it's merely an identifier), and set the `redis_sentinel` variable inline within the inventory file.
+And here's the playbook:
 
-Now, all we need to do is set the `redis_sentinel_monitors` variable to define the Redis masters which Sentinel should monitor. In this case, I'm going to do this within the playbook:
+``` main.yml
+---
+- hosts: redis-master
+  tasks:
+    - name: redis master
+      include_role:
+        name: ansible-redis
+      vars:
+        redis_bind: 0.0.0.0
+        redis_port: 7379
+        cluster_enabled: false
+ 
+- hosts: redis-slave
+  tasks:
+    - name: redis slaves
+      with_items:
+        - redis_bind: 0.0.0.0
+          redis_port: 7379
+          redis_slaveof: 10.1.1.1 7379
+          cluster_enabled: false
+      loop_control:
+        loop_var: outer_item
+      include_role:
+        name: ansible-redis
+      vars:
+        redis_bind: "{{ outer_item.redis_bind }}"
+        redis_port: "{{ outer_item.redis_port }}"
+        redis_slaveof: "{{ outer_item.redis_slaveof }}"
+        cluster_enabled: "{{ outer_item.cluster_enabled }}"
+ 
+- hosts: redis-sentinel
+  tasks:
+    - name: configure redis sentinel nodes
+      vars:
+        - redis_sentinel_monitors:
+          - name: master01
+            host: redis-master.example.com
+            port: 7379
+      include_role:
+        name: ansible-redis
 
-``` yml
-- name: configure the master redis server
-  hosts: redis-master
-  roles:
-    - ansible-redis
-
-- name: configure redis slaves
-  hosts: redis-slave
-  vars:
-    - redis_slaveof: redis-master.example.com 6379
-  roles:
-    - ansible-redis
-
-- name: configure redis sentinel nodes
-  hosts: redis-sentinel
-  vars:
-    - redis_sentinel_monitors:
-      - name: master01
-        host: redis-master.example.com
-        port: 6379
-  roles:
-    - ansible-redis
 ```
 
-This will configure the Sentinel nodes to monitor the master we created above using the identifier `master01`. By default, Sentinel will use a quorum of 2, which means that at least 2 Sentinels must agree that a master is down in order for a failover to take place. This value can be overridden by setting the `quorum` key within your monitor definition. See the [Sentinel docs](http://redis.io/topics/sentinel) for more details.
+In this case, I'm assuming you have DNS records set up for redis-master.example.com, but that's not always the case. You can pretty much go crazy with whatever you need this to be set to. In many cases, I tell Ansible to use the eth1 IP address for the master. Here's a more flexible value for the sake of posterity:
 
-Along with the variables listed above, Sentinel has a number of its own configurables just as Redis server does. These are prefixed with `redis_sentinel_`, and are enumerated in the **Role Variables** section below.
-
+``` main.yml
+redis_slaveof: "{{ hostvars['redis-master.example.com'].ansible_eth0.ipv4.address }} {{ redis_port }}"
+```
 
 ## Advanced Options
 
@@ -301,6 +260,17 @@ redis_sentinel_monitors:
     failover_timeout: 180000
     notification_script: false
     client_reconfig_script: false
+    
+# Cluster
+cluster-enabled yes
+cluster-config-file nodes-{{ redis_port }}.conf
+cluster-node-timeout 15000
+cluster-slave-validity-factor 10
+cluster-migration-barrier 1
+cluster-require-full-coverage yes
+cluster-slave-no-failover no
+
+
 
 ```
 
